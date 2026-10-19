@@ -1,0 +1,31 @@
+name: Secure TCP checks
+
+on:
+  push:
+    branches:
+      - secure-tcp-oss
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test hbbs library
+        run: cargo test --lib
+
+      - name: Build server binaries
+        run: cargo build
