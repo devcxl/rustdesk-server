@@ -54,6 +54,10 @@ dns-lookup = "1.0.8"
 ping = "0.4.0"
 flate2 = "1.0"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux release binaries target musl and run from scratch images; bundle OpenSSL for the existing native-tls dependency.
+native-tls = { version = "0.2", features = ["vendored"] }
+
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 # https://github.com/rustdesk/rustdesk-server-pro/issues/189, using native-tls for better tls support
 reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocking", "socks", "json", "native-tls", "gzip"], default-features=false }
@@ -63,6 +67,10 @@ reqwest = { git = "https://github.com/rustdesk-org/reqwest", features = ["blocki
 
 [build-dependencies]
 hbb_common = { path = "libs/hbb_common" }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+# hbb_common is also built for the host; its native-tls dependency needs bundled OpenSSL there too.
+native-tls = { version = "0.2", features = ["vendored"] }
 
 [workspace]
 members = ["libs/hbb_common"]
