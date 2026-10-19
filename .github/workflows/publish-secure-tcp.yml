@@ -1,0 +1,160 @@
+name: Publish secure TCP server image
+
+on:
+  push:
+    branches:
+      - secure-tcp-oss
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secure-tcp-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/devcxl/rustdesk-server
+
+jobs:
+  test:
+    if: github.repository == 'devcxl/rustdesk-server' && github.ref == 'refs/heads/secure-tcp-oss'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test hbbs library
+        run: cargo test --lib
+
+  build-binaries:
+    if: github.repository == 'devcxl/rustdesk-server' && github.ref == 'refs/heads/secure-tcp-oss'
+    needs: test
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-musl
+          - arch: arm64v8
+            target: aarch64-unknown-linux-musl
+          - arch: armv7
+            target: armv7-unknown-linux-musleabihf
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        run: cargo install cross --locked
+
+      - name: Build hbbs and hbbr
+        run: >-
+          cross build --release --all-features
+          --target=${{ matrix.target }}
+          --bin hbbs --bin hbbr
+
+      - name: Stage classic image binaries
+        run: |
+          install -D -m 0755 "target/${{ matrix.target }}/release/hbbs" docker-classic/hbbs
+          install -D -m 0755 "target/${{ matrix.target }}/release/hbbr" docker-classic/hbbr
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.arch }}
+          path: |
+            docker-classic/hbbs
+            docker-classic/hbbr
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-architecture-images:
+    if: github.repository == 'devcxl/rustdesk-server' && github.ref == 'refs/heads/secure-tcp-oss'
+    needs: build-binaries
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64v8
+            platform: linux/arm64
+          - arch: armv7
+            platform: linux/arm/v7
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout image definition
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: server-${{ matrix.arch }}
+          path: docker-classic
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish architecture image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker-classic
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.IMAGE }}:secure-tcp-${{ matrix.arch }}
+            ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
+
+  publish-manifest:
+    if: github.repository == 'devcxl/rustdesk-server' && github.ref == 'refs/heads/secure-tcp-oss'
+    needs: publish-architecture-images
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-architecture manifest
+        env:
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:secure-tcp" \
+            --tag "${IMAGE}:sha-${SHORT_SHA:0:12}" \
+            "${IMAGE}:sha-${SHORT_SHA}-amd64" \
+            "${IMAGE}:sha-${SHORT_SHA}-arm64v8" \
+            "${IMAGE}:sha-${SHORT_SHA}-armv7"
