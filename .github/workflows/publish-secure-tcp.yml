@@ -109,6 +109,9 @@ jobs:
           name: server-${{ matrix.arch }}
           path: docker-classic
 
+      - name: Restore executable permissions
+        run: chmod 0755 docker-classic/hbbs docker-classic/hbbr
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
